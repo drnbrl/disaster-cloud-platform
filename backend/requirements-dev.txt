@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest>=8.3,<9
+pytest-cov>=6,<7
+moto[dynamodb,sqs]>=5.0,<6
+fastapi>=0.115,<1
+uvicorn[standard]>=0.32,<1

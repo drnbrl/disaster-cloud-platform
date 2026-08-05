@@ -1,0 +1,4 @@
+boto3>=1.42,<2
+pydantic>=2.10,<3
+argon2-cffi>=23.1,<26
+PyJWT>=2.10,<3

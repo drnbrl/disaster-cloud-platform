@@ -1,0 +1,33 @@
+.DS_Store
+.env
+.env.local
+frontend/.env.local
+backend/env.local.json
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+node_modules/
+frontend/dist/
+backend/.aws-sam/
+.vscode/
+.idea/
+*.log
+
+# Other environment files
+.env.*
+!.env.example
+frontend/.env.aws-dev
+
+# AWS SAM build output
+.aws-sam/
+
+# Local Lambda packages
+dist/lambda/
+
+# Private keys
+*.pem
+*.key
+
+# Local SAM deployment configuration
+backend/samconfig.toml

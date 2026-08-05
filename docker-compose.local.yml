@@ -1,0 +1,58 @@
+services:
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/home/dynamodblocal/data"]
+    user: root
+    ports:
+      - "8000:8000"
+    volumes:
+      - dynamodb-local-data:/home/dynamodblocal/data
+
+  backend:
+    image: python:3.12-slim
+    working_dir: /workspace/backend
+    depends_on:
+      - dynamodb-local
+    ports:
+      - "8001:8001"
+    environment:
+      APP_ENV: local
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_DEFAULT_REGION: us-west-2
+      LOCAL_AWS_ACCESS_KEY_ID: local
+      LOCAL_AWS_SECRET_ACCESS_KEY: local
+      LOCAL_DYNAMODB_ENDPOINT: http://dynamodb-local:8000
+      REQUESTS_TABLE_NAME: local-disaster-requests
+      STATISTICS_TABLE_NAME: local-disaster-statistics
+      LOCAL_ADMIN_USERS_TABLE_NAME: local-admin-users
+      LOCAL_ALLOWED_ORIGIN: http://localhost:5173
+      LOCAL_JWT_SECRET: local-dev-only-insecure-jwt-secret-change-me
+      LOCAL_JWT_ISSUER: ai-disaster-cloud-platform-local
+      LOCAL_JWT_AUDIENCE: local-admin-api
+      PYTHONPATH: /workspace/backend/src
+    volumes:
+      - .:/workspace
+    command: >
+      sh -c "python -m pip install --disable-pip-version-check -r requirements-dev.txt &&
+             uvicorn local_app.main:app --host 0.0.0.0 --port 8001"
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /workspace/frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8001
+      VITE_AUTH_MODE: local
+    volumes:
+      - .:/workspace
+      - frontend-node-modules:/workspace/frontend/node_modules
+    command: >
+      sh -c "npm ci &&
+             npm run dev -- --host 0.0.0.0 --port 5173"
+
+volumes:
+  dynamodb-local-data:
+  frontend-node-modules:

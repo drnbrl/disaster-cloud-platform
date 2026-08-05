@@ -1,0 +1,318 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: AI-Powered Disaster Cloud Platform MVP
+
+Parameters:
+  StageName:
+    Type: String
+    Default: dev
+  AllowedOrigin:
+    Type: String
+    Default: http://localhost:5173
+  UseMockAi:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+  BedrockModelId:
+    Type: String
+    Default: ""
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 15
+    MemorySize: 256
+    Tracing: Active
+    Environment:
+      Variables:
+        REQUESTS_TABLE_NAME: !Ref RequestsTable
+        STATISTICS_TABLE_NAME: !Ref StatisticsTable
+        ANALYSIS_QUEUE_URL: !Ref AnalysisQueue
+        USE_MOCK_AI: !Ref UseMockAi
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
+        PROMPT_VERSION: "1.0.0"
+        ALLOWED_ORIGIN: !Ref AllowedOrigin
+  Api:
+    TracingEnabled: true
+
+Resources:
+  DisasterApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub disaster-platform-${StageName}
+      StageName: !Ref StageName
+      Cors:
+        AllowMethods: "'GET,POST,PATCH,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization,Idempotency-Key'"
+        AllowOrigin: !Sub "'${AllowedOrigin}'"
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        AddDefaultAuthorizerToCorsPreflight: false
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt AdminUserPool.Arn
+
+  AdminUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub disaster-admin-${StageName}
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+  AdminUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub disaster-admin-web-${StageName}
+      UserPoolId: !Ref AdminUserPool
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  RequestsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: requestId, AttributeType: S}
+        - {AttributeName: gsi1pk, AttributeType: S}
+        - {AttributeName: gsi1sk, AttributeType: S}
+        - {AttributeName: gsi2pk, AttributeType: S}
+        - {AttributeName: gsi2sk, AttributeType: S}
+        - {AttributeName: gsi3pk, AttributeType: S}
+        - {AttributeName: gsi3sk, AttributeType: S}
+        - {AttributeName: gsi4pk, AttributeType: S}
+        - {AttributeName: gsi4sk, AttributeType: S}
+      KeySchema:
+        - {AttributeName: requestId, KeyType: HASH}
+      GlobalSecondaryIndexes:
+        - IndexName: PriorityIndex
+          KeySchema:
+            - {AttributeName: gsi1pk, KeyType: HASH}
+            - {AttributeName: gsi1sk, KeyType: RANGE}
+          Projection: {ProjectionType: ALL}
+        - IndexName: CityIndex
+          KeySchema:
+            - {AttributeName: gsi2pk, KeyType: HASH}
+            - {AttributeName: gsi2sk, KeyType: RANGE}
+          Projection: {ProjectionType: ALL}
+        - IndexName: StatusIndex
+          KeySchema:
+            - {AttributeName: gsi3pk, KeyType: HASH}
+            - {AttributeName: gsi3sk, KeyType: RANGE}
+          Projection: {ProjectionType: ALL}
+        - IndexName: CreatedIndex
+          KeySchema:
+            - {AttributeName: gsi4pk, KeyType: HASH}
+            - {AttributeName: gsi4sk, KeyType: RANGE}
+          Projection: {ProjectionType: ALL}
+      PointInTimeRecoverySpecification: {PointInTimeRecoveryEnabled: true}
+      SSESpecification: {SSEEnabled: true}
+
+  StatisticsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: scope, AttributeType: S}
+      KeySchema:
+        - {AttributeName: scope, KeyType: HASH}
+      PointInTimeRecoverySpecification: {PointInTimeRecoveryEnabled: true}
+      SSESpecification: {SSEEnabled: true}
+
+  AnalysisDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  AnalysisQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 90
+      MessageRetentionPeriod: 345600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt AnalysisDeadLetterQueue.Arn
+        maxReceiveCount: 4
+
+  CreateRequestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: functions.create_request.app.lambda_handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt RequestsTable.Arn
+            - Effect: Allow
+              Action: [sqs:SendMessage]
+              Resource: !GetAtt AnalysisQueue.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DisasterApi
+            Path: /v1/requests
+            Method: POST
+            Auth: {Authorizer: NONE}
+
+  GetRequestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: functions.get_request.app.lambda_handler
+      Policies:
+        - DynamoDBReadPolicy: {TableName: !Ref RequestsTable}
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DisasterApi
+            Path: /v1/requests/{requestId}
+            Method: GET
+            Auth: {Authorizer: NONE}
+
+  AnalyzeRequestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: functions.analyze_request.app.lambda_handler
+      Timeout: 45
+      MemorySize: 512
+      ReservedConcurrentExecutions: 5
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem, dynamodb:TransactWriteItems]
+              Resource:
+                - !GetAtt RequestsTable.Arn
+                - !GetAtt StatisticsTable.Arn
+            - Effect: Allow
+              Action: [bedrock:InvokeModel]
+              Resource: "*"
+      Events:
+        Queue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt AnalysisQueue.Arn
+            BatchSize: 5
+            FunctionResponseTypes: [ReportBatchItemFailures]
+            ScalingConfig: {MaximumConcurrency: 5}
+
+  ListRequestsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: functions.list_requests.app.lambda_handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:Query]
+              Resource:
+                - !GetAtt RequestsTable.Arn
+                - !Sub "${RequestsTable.Arn}/index/*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DisasterApi
+            Path: /v1/admin/requests
+            Method: GET
+
+  DashboardFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: functions.dashboard.app.lambda_handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:Scan]
+              Resource: !GetAtt StatisticsTable.Arn
+            - Effect: Allow
+              Action: [dynamodb:Query]
+              Resource:
+                - !GetAtt RequestsTable.Arn
+                - !Sub "${RequestsTable.Arn}/index/CreatedIndex"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DisasterApi
+            Path: /v1/admin/dashboard
+            Method: GET
+
+  UpdateRequestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: functions.update_request.app.lambda_handler
+      Policies:
+        - DynamoDBCrudPolicy: {TableName: !Ref RequestsTable}
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DisasterApi
+            Path: /v1/admin/requests/{requestId}/status
+            Method: PATCH
+
+  ResourceAllocationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: functions.resource_allocation.app.lambda_handler
+      Timeout: 30
+      Policies:
+        - DynamoDBReadPolicy: {TableName: !Ref StatisticsTable}
+        - Statement:
+            - Effect: Allow
+              Action: [bedrock:InvokeModel]
+              Resource: "*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DisasterApi
+            Path: /v1/admin/allocations
+            Method: POST
+
+  DeadLetterQueueAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Messages are waiting in the analysis dead-letter queue.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt AnalysisDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  ApiUrl:
+    Value: !Sub "https://${DisasterApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${StageName}"
+  AdminUserPoolId: {Value: !Ref AdminUserPool}
+  AdminUserPoolClientId: {Value: !Ref AdminUserPoolClient}
+  RequestsTableName: {Value: !Ref RequestsTable}
+  StatisticsTableName: {Value: !Ref StatisticsTable}
+  AnalysisQueueUrl: {Value: !Ref AnalysisQueue}
+  AnalysisDeadLetterQueueUrl: {Value: !Ref AnalysisDeadLetterQueue}
