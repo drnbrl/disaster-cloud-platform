@@ -16,10 +16,11 @@
 ## SQS
 
 - disaster-analysis-queue-dev
-- disaster-analysis-dlq-dev
+- disaster-analysis-dlq-dev (dead-letter queue)
 
 ## Lambda
-
+- disaster-create-request-dev (role name: DisasterCreateRequestRole)
+- disaster-analyze-request-dev (DisasterAnalyzeRequestRole)
 
 ## API Gateway
 
