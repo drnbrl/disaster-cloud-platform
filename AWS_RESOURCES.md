@@ -24,6 +24,10 @@
 
 ## API Gateway
 
+- API: disaster-api-dev
+- Stage: dev
+- Region: eu-north-1
+- Base URL: https://3eul8hexs3.execute-api.eu-north-1.amazonaws.com/dev
 
 ## Cognito
 
