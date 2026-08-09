@@ -2,11 +2,15 @@ export const isLocalAuthMode = import.meta.env.VITE_AUTH_MODE === "local";
 
 const BASE_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:8001").replace(/\/$/, "");
 const localSessionStorageKey = "disaster-platform-local-admin-token";
+const newPasswordRequiredStep = "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED";
 let amplifyConfigured = false;
 
 interface LocalLoginResponse {
   accessToken: string;
 }
+
+export type LoginResult = { status: "signedIn" } | { status: "newPasswordRequired" };
+export type ConfirmNewPasswordResult = { status: "signedIn" } | { status: "incomplete"; signInStep: string };
 
 async function configureAmplify(): Promise<void> {
   if (amplifyConfigured) return;
@@ -23,19 +27,29 @@ async function configureAmplify(): Promise<void> {
   amplifyConfigured = true;
 }
 
-export async function login(username: string, password: string): Promise<void> {
+export async function login(username: string, password: string): Promise<LoginResult> {
   if (isLocalAuthMode) {
     const result = await localAuthRequest<LocalLoginResponse>("/v1/local-auth/login", {
       method: "POST",
       body: JSON.stringify({ email: username, password })
     });
     sessionStorage.setItem(localSessionStorageKey, result.accessToken);
-    return;
+    return { status: "signedIn" };
   }
   await configureAmplify();
   const { signIn } = await import("aws-amplify/auth");
   const result = await signIn({ username, password });
-  if (!result.isSignedIn) throw new Error(`Giriş tamamlanamadı: ${result.nextStep.signInStep}`);
+  if (result.isSignedIn) return { status: "signedIn" };
+  if (result.nextStep.signInStep === newPasswordRequiredStep) return { status: "newPasswordRequired" };
+  throw new Error(incompleteSignInMessage(result.nextStep.signInStep));
+}
+
+export async function confirmNewPassword(newPassword: string): Promise<ConfirmNewPasswordResult> {
+  await configureAmplify();
+  const { confirmSignIn } = await import("aws-amplify/auth");
+  const result = await confirmSignIn({ challengeResponse: newPassword });
+  if (result.isSignedIn) return { status: "signedIn" };
+  return { status: "incomplete", signInStep: result.nextStep.signInStep };
 }
 
 export async function logout(): Promise<void> {
@@ -99,4 +113,8 @@ function extractErrorMessage(body: { detail?: unknown; message?: unknown; error?
     if (typeof value === "string" && value.trim()) return value;
   }
   return "İşlem tamamlanamadı.";
+}
+
+function incompleteSignInMessage(signInStep: string): string {
+  return `Giriş tamamlanamadı. Sonraki oturum açma adımı: ${signInStep}`;
 }
