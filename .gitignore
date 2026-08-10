@@ -31,3 +31,4 @@ dist/lambda/
 
 # Local SAM deployment configuration
 backend/samconfig.toml
+dist/
