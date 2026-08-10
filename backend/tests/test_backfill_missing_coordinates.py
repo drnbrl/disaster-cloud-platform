@@ -94,8 +94,8 @@ def test_backfill_never_overwrites_existing_coordinates(monkeypatch: pytest.Monk
     }
     assert len(table.updates) == 1
     assert table.updates[0]["Key"] == {"requestId": "missing"}
-    assert missing_coordinates["latitude"] == 36.2021
-    assert missing_coordinates["longitude"] == 36.1604
+    assert missing_coordinates["latitude"] == Decimal("36.2021")
+    assert missing_coordinates["longitude"] == Decimal("36.1604")
     assert table.scan_kwargs[0]["FilterExpression"] is not None
     output = capsys.readouterr().out
     assert "scanned: 2" in output

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from decimal import Decimal
 import os
 import sys
 from pathlib import Path
@@ -81,7 +82,7 @@ def _update_location_attributes(table: Any, request_id: str, attributes: dict[st
         name_key = f"#location{index}"
         value_key = f":location{index}"
         names[name_key] = name
-        values[value_key] = value
+        values[value_key] = Decimal(str(value)) if isinstance(value, float) else value
         assignments.append(f"{name_key}={value_key}")
     table.update_item(
         Key={"requestId": request_id},
