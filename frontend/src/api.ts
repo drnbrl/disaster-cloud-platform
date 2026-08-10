@@ -1,5 +1,6 @@
 import { accessToken } from "./auth";
-import type { AllocationResources, AllocationResponse, DashboardResponse, DisasterRequest, RequestStatus } from "./types";
+import { allocationRequestPayload } from "./allocationUtils";
+import type { AllocationRequestPayload, AllocationResources, AllocationResponse, DashboardResponse, DisasterRequest, RequestStatus } from "./types";
 
 const BASE_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:8001").replace(/\/$/, "");
 type ErrorBody = { detail?: unknown; message?: unknown; error?: unknown };
@@ -32,28 +33,12 @@ export function getDashboard(): Promise<DashboardResponse> { return call("/v1/ad
 export function updateRequestStatus(id: string, status: RequestStatus): Promise<DisasterRequest> {
   return call(`/v1/admin/requests/${encodeURIComponent(id)}/status`, { method: "PATCH", body: JSON.stringify({ status }) }, true);
 }
-export async function allocateResources(resources: AllocationResources): Promise<AllocationResponse> {
-  const response = await call<unknown>("/v1/admin/allocations", { method: "POST", body: JSON.stringify(allocationRequestPayload(resources)) }, true);
+export async function allocateResources(payload: AllocationResources | AllocationRequestPayload): Promise<AllocationResponse> {
+  const response = await call<unknown>("/v1/admin/allocations", { method: "POST", body: JSON.stringify(allocationRequestPayload(payload)) }, true);
   if (!isAllocationResponse(response)) {
     throw new Error("Kaynak dağıtımı hesaplanamadı. API yanıtı beklenen dağıtım sonucunu içermiyor.");
   }
   return response;
-}
-
-function allocationRequestPayload(resources: AllocationResources): { resources: AllocationResources } {
-  return {
-    resources: {
-      waterLiters: toNonNegativeNumber(resources.waterLiters),
-      tents: toNonNegativeNumber(resources.tents),
-      medicalStaff: toNonNegativeNumber(resources.medicalStaff),
-      blankets: toNonNegativeNumber(resources.blankets)
-    }
-  };
-}
-
-function toNonNegativeNumber(value: unknown): number {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? Math.max(0, Math.trunc(numeric)) : 0;
 }
 
 function isAllocationResponse(value: unknown): value is AllocationResponse {

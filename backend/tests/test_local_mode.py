@@ -10,6 +10,7 @@ from boto3.dynamodb.types import TypeDeserializer
 import local_app.dynamodb as local_dynamodb
 import local_app.service as local_service
 from local_app.service import StoredRequest, create_request, process_request
+from local_app.local_auth import LocalAdminPrincipal
 from local_app.settings import LocalSettings, get_settings, validate_local_endpoint
 from shared.models import CreateRequestInput
 
@@ -158,6 +159,34 @@ def test_local_post_requests_accepts_valid_request(monkeypatch: pytest.MonkeyPat
     assert captured_payloads[0].city == "Hatay"
     assert captured_payloads[0].district == "Antakya"
     assert captured_payloads[0].address == "Atatürk Caddesi, No: 15, Antakya/Hatay"
+
+
+def test_local_allocation_invalid_custom_resource_returns_controlled_400(monkeypatch: pytest.MonkeyPatch):
+    import local_app.main as local_main
+
+    local_main.app.dependency_overrides[local_main.require_local_admin] = lambda: LocalAdminPrincipal(
+        email="admin@example.com",
+        display_name="Admin",
+        role="admin",
+    )
+    try:
+        status_code, body = asyncio.run(
+            post_json(
+                local_main.app,
+                "/v1/admin/allocations",
+                {
+                    "resources": {"waterLiters": 0, "tents": 0, "medicalStaff": 0, "blankets": 0},
+                    "customResources": [{"name": "Yakıt", "quantity": 1, "unit": "litre"}],
+                },
+                {"Authorization": "Bearer local-test"},
+            )
+        )
+    finally:
+        local_main.app.dependency_overrides.clear()
+
+    assert status_code == 400
+    assert body["error"] == "VALIDATION_ERROR"
+    assert any(item["field"] == "customResources.0.id" for item in body["details"])
 
 
 def test_local_create_request_stores_required_location_without_coordinates(monkeypatch: pytest.MonkeyPatch):

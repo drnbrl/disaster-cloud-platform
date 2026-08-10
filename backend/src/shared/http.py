@@ -41,20 +41,22 @@ def parse_body(event: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+def validation_error_body(exc: ValidationError) -> dict[str, Any]:
+    return {
+        "error": "VALIDATION_ERROR",
+        "message": "Request validation failed.",
+        "details": [
+            {
+                "field": ".".join(str(part) for part in item["loc"]),
+                "message": item["msg"],
+            }
+            for item in exc.errors()
+        ],
+    }
+
+
 def validation_error(exc: ValidationError) -> dict[str, Any]:
-    return response(
-        400,
-        {
-            "error": "VALIDATION_ERROR",
-            "details": [
-                {
-                    "field": ".".join(str(part) for part in item["loc"]),
-                    "message": item["msg"],
-                }
-                for item in exc.errors()
-            ],
-        },
-    )
+    return response(400, validation_error_body(exc))
 
 
 def header(event: dict[str, Any], name: str) -> str | None:

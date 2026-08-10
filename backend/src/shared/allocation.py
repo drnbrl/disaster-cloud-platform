@@ -4,7 +4,12 @@ import math
 from typing import Any
 
 RESOURCES = ("waterLiters", "tents", "medicalStaff", "blankets")
-RESOURCE_CATEGORIES = ("water", "food", "shelter", "medical", "electricity", "general")
+STANDARD_RESOURCE_DEFINITIONS: dict[str, dict[str, str]] = {
+    "waterLiters": {"id": "water", "name": "Su", "unit": "litre", "systemKey": "waterLiters"},
+    "tents": {"id": "tents", "name": "Çadır", "unit": "adet", "systemKey": "tents"},
+    "medicalStaff": {"id": "medical-staff", "name": "Sağlık personeli", "unit": "kişi", "systemKey": "medicalStaff"},
+    "blankets": {"id": "blankets", "name": "Battaniye", "unit": "adet", "systemKey": "blankets"},
+}
 
 
 def _as_non_negative_int(value: Any) -> int:
@@ -28,42 +33,33 @@ def _score(city: dict[str, Any], resource: str) -> float:
     raise ValueError(f"Unknown resource: {resource}")
 
 
-def _category_score(city: dict[str, Any], category: str) -> float:
+def _general_score(city: dict[str, Any]) -> float:
     critical = float(city.get("criticalRequests", 0))
     affected = float(city.get("affectedPeople", 0))
     injured = float(city.get("injuredPeople", 0))
-    if category == "water":
-        return _score(city, "waterLiters")
-    if category == "food":
-        return float(city.get("foodRequests", 0)) * 5 + critical + affected * 0.02
-    if category == "shelter":
-        return _score(city, "tents")
-    if category == "medical":
-        return _score(city, "medicalStaff")
-    if category == "electricity":
-        return float(city.get("electricityRequests", 0)) * 5 + critical + affected * 0.01
-    if category == "general":
-        need_requests = sum(
-            float(city.get(key, 0))
-            for key in ("waterRequests", "foodRequests", "shelterRequests", "medicalRequests", "electricityRequests", "babySupportRequests")
-        )
-        return (
-            critical * 6
-            + float(city.get("highRequests", 0)) * 4
-            + float(city.get("mediumRequests", 0)) * 2
-            + float(city.get("lowRequests", 0))
-            + float(city.get("totalRequests", 0)) * 0.5
-            + need_requests
-            + affected * 0.03
-            + injured * 2
-        )
-    raise ValueError(f"Unknown resource category: {category}")
+    need_requests = sum(
+        float(city.get(key, 0))
+        for key in ("waterRequests", "foodRequests", "shelterRequests", "medicalRequests", "electricityRequests", "babySupportRequests")
+    )
+    return (
+        critical * 6
+        + float(city.get("highRequests", 0)) * 4
+        + float(city.get("mediumRequests", 0)) * 2
+        + float(city.get("lowRequests", 0))
+        + float(city.get("totalRequests", 0)) * 0.5
+        + need_requests
+        + affected * 0.03
+        + injured * 2
+    )
 
 
-def _largest_remainder(total: int, scores: dict[str, float]) -> tuple[dict[str, int], int]:
+def _largest_remainder(total: int, scores: dict[str, float], *, distribute_when_scores_are_zero: bool = False) -> tuple[dict[str, int], int]:
     total = max(0, total)
     positive = {city: score for city, score in scores.items() if score > 0}
     score_sum = sum(positive.values())
+    if total > 0 and score_sum <= 0 and distribute_when_scores_are_zero and scores:
+        positive = {city: 1.0 for city in scores}
+        score_sum = sum(positive.values())
     if total <= 0 or score_sum <= 0:
         return {city: 0 for city in scores}, total
     exact = {city: total * score / score_sum for city, score in positive.items()}
@@ -85,18 +81,24 @@ def _custom_resources(inventory: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         quantity = _as_non_negative_int(item.get("quantity", 0))
-        category = str(item.get("category", "general"))
-        if quantity <= 0 or category not in RESOURCE_CATEGORIES:
+        resource_id = str(item.get("id", "")).strip()
+        name = str(item.get("name", "")).strip()
+        unit = str(item.get("unit", "")).strip()
+        if not resource_id or not name or not unit:
             continue
         resources.append(
             {
-                "name": str(item.get("name", "")).strip(),
+                "id": resource_id,
+                "name": name,
                 "quantity": quantity,
-                "unit": str(item.get("unit", "")).strip(),
-                "category": category,
+                "unit": unit,
             }
         )
     return resources
+
+
+def _standard_resource_result(resource: str, quantity: int) -> dict[str, Any]:
+    return {**STANDARD_RESOURCE_DEFINITIONS[resource], "quantity": quantity}
 
 
 def calculate_allocation(inventory: dict[str, Any], city_stats: list[dict[str, Any]]) -> dict[str, Any]:
@@ -115,8 +117,8 @@ def calculate_allocation(inventory: dict[str, Any], city_stats: list[dict[str, A
     custom_resources = _custom_resources(inventory)
     custom_distributions = []
     for resource in custom_resources:
-        scores = {city: _category_score(by_city[city], resource["category"]) for city in cities}
-        distribution, remaining = _largest_remainder(resource["quantity"], scores)
+        scores = {city: _general_score(by_city[city]) for city in cities}
+        distribution, remaining = _largest_remainder(resource["quantity"], scores, distribute_when_scores_are_zero=True)
         custom_distributions.append(
             {
                 "resource": resource,
@@ -130,6 +132,13 @@ def calculate_allocation(inventory: dict[str, Any], city_stats: list[dict[str, A
             {**item["resource"], "quantity": item["remaining"]}
             for item in custom_distributions
         ]
+    unallocated["resources"] = [
+        _standard_resource_result(resource, _as_non_negative_int(unallocated.get(resource, 0)))
+        for resource in RESOURCES
+    ] + [
+        {**item["resource"], "quantity": item["remaining"]}
+        for item in custom_distributions
+    ]
 
     allocations = []
     for city in cities:
@@ -140,7 +149,12 @@ def calculate_allocation(inventory: dict[str, Any], city_stats: list[dict[str, A
             if item["distribution"].get(city, 0) > 0
         ]
         if any(values.values()) or custom_values:
-            allocation = {"city": city, **values, "needScores": fixed_need_scores[city]}
+            resources = [
+                _standard_resource_result(resource, values[resource])
+                for resource in RESOURCES
+                if values[resource] > 0
+            ] + custom_values
+            allocation = {"city": city, **values, "needScores": fixed_need_scores[city], "resources": resources}
             if custom_resources:
                 allocation["customResources"] = custom_values
             allocations.append(allocation)
@@ -151,4 +165,4 @@ def calculate_allocation(inventory: dict[str, Any], city_stats: list[dict[str, A
         ),
         reverse=True,
     )
-    return {"allocations": allocations, "unallocated": unallocated, "rulesVersion": "1.0.0"}
+    return {"allocations": allocations, "unallocated": unallocated, "rulesVersion": "1.1.0"}

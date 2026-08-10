@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Response, status
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, Header, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import ValidationError
 
 from local_app.dynamodb import ensure_tables, get_dynamodb_client
 from local_app import local_auth
@@ -12,6 +14,7 @@ from local_app import service
 from local_app.local_auth import LocalAdminPrincipal, LocalLoginInput
 from local_app.service import LocalNotFoundError, LocalValidationError
 from local_app.settings import get_settings
+from shared.http import validation_error_body
 from shared.models import AllocationInput, CreateRequestInput, StatusUpdateInput
 
 bearer = HTTPBearer(auto_error=False)
@@ -130,5 +133,9 @@ def dashboard() -> dict[str, object]:
 
 
 @app.post("/v1/admin/allocations", dependencies=[Depends(require_local_admin)])
-def allocate(payload: AllocationInput) -> dict[str, object]:
+def allocate(raw_payload: Annotated[Any, Body()]) -> Any:
+    try:
+        payload = AllocationInput.model_validate(raw_payload)
+    except ValidationError as exc:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=validation_error_body(exc))
     return service.allocate(payload)

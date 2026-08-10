@@ -52,11 +52,20 @@ export interface GlobalStats {
 export interface CityStats extends GlobalStats { scope: string; city: string; }
 export interface DashboardResponse { global: GlobalStats; cities: CityStats[]; recentRequests: DisasterRequest[]; }
 export interface AllocationResources { waterLiters: number; tents: number; medicalStaff: number; blankets: number; }
-export type CustomResourceCategory = "water" | "food" | "shelter" | "medical" | "electricity" | "general";
-export interface CustomResourceInput { name: string; quantity: number; unit: string; category: CustomResourceCategory; }
+export interface CustomResourceInput { id: string; name: string; quantity: number; unit: string; }
+export interface AllocationResourceResult extends CustomResourceInput { systemKey?: keyof AllocationResources; }
+export interface AllocationRequestPayload { resources: AllocationResources; customResources?: CustomResourceInput[]; }
 export interface AllocationInventory extends AllocationResources { customResources?: CustomResourceInput[]; }
-export interface AllocationItem extends AllocationResources { city: string; customResources?: CustomResourceInput[]; needScores: Record<keyof AllocationResources, number>; }
-export interface AllocationUnallocated extends Partial<AllocationResources> { customResources?: CustomResourceInput[]; }
+export interface AllocationItem extends AllocationResources {
+  city: string;
+  resources?: AllocationResourceResult[];
+  customResources?: AllocationResourceResult[];
+  needScores: Record<keyof AllocationResources, number>;
+}
+export interface AllocationUnallocated extends Partial<AllocationResources> {
+  resources?: AllocationResourceResult[];
+  customResources?: AllocationResourceResult[];
+}
 export interface AllocationResponse {
   allocations: AllocationItem[];
   unallocated: AllocationUnallocated;

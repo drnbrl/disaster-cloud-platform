@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 PriorityLevel = Literal["low", "medium", "high", "critical"]
 RequestStatus = Literal["RECEIVED", "REVIEWED", "ASSIGNED", "IN_PROGRESS", "RESOLVED", "REJECTED"]
-ResourceCategory = Literal["water", "food", "shelter", "medical", "electricity", "general"]
 
 
 class CreateRequestInput(BaseModel):
@@ -62,16 +61,16 @@ class ResourceInventory(BaseModel):
 
 class CustomResourceInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    name: str = Field(min_length=1, max_length=80)
-    quantity: int = Field(gt=0, le=1_000_000_000)
+    id: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=60)
+    quantity: Annotated[int, Field(strict=True, ge=0, le=1_000_000_000)]
     unit: str = Field(min_length=1, max_length=30)
-    category: ResourceCategory
 
 
 class AllocationInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     resources: ResourceInventory
-    customResources: list[CustomResourceInput] = Field(default_factory=list, max_length=20)
+    customResources: list[CustomResourceInput] = Field(default_factory=list, max_length=100)
     cities: list[str] | None = Field(default=None, max_length=100)
 
     def inventory_payload(self) -> dict[str, Any]:

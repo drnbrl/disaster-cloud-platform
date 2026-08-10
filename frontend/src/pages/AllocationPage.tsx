@@ -2,9 +2,18 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { allocateResources } from "../api";
-import type { AllocationResources, AllocationUnallocated } from "../types";
-
-type ResourceKey = keyof AllocationResources;
+import {
+  allocationDisplayResources,
+  buildAllocationRequestFromInventory,
+  formatQuantity,
+  resetAllocationResultAfterInventoryChange,
+  standardResourceDefinitionByKey,
+  toSafeAmount,
+  unallocatedDisplayResources,
+  type ResourceKey
+} from "../allocationUtils";
+import { AllocationResourceList } from "../components/AllocationResourceList";
+import type { AllocationRequestPayload, AllocationResources, AllocationUnallocated } from "../types";
 
 type InventoryResource = {
   id: string;
@@ -37,9 +46,7 @@ interface ResourceDefinition {
   defaultQuantity: number;
 }
 
-type AllocationMutationPayload = {
-  resources: AllocationResources;
-};
+type AllocationMutationPayload = AllocationRequestPayload;
 
 type UnallocatedRow = {
   id: string;
@@ -81,10 +88,10 @@ const resourceNameSuggestionsId = "resource-name-suggestions";
 const resourceUnitSuggestionsId = "resource-unit-suggestions";
 const defaultInventory: Readonly<AllocationResources> = { waterLiters: 500, tents: 100, medicalStaff: 20, blankets: 50 };
 const resourceDefinitionByKey: Record<ResourceKey, ResourceDefinition> = {
-  waterLiters: { key: "waterLiters", name: "Su", unit: "litre", defaultQuantity: defaultInventory.waterLiters },
-  tents: { key: "tents", name: "Çadır", unit: "adet", defaultQuantity: defaultInventory.tents },
-  medicalStaff: { key: "medicalStaff", name: "Sağlık personeli", unit: "kişi", defaultQuantity: defaultInventory.medicalStaff },
-  blankets: { key: "blankets", name: "Battaniye", unit: "adet", defaultQuantity: defaultInventory.blankets }
+  waterLiters: { key: "waterLiters", name: standardResourceDefinitionByKey.waterLiters.name, unit: standardResourceDefinitionByKey.waterLiters.unit, defaultQuantity: defaultInventory.waterLiters },
+  tents: { key: "tents", name: standardResourceDefinitionByKey.tents.name, unit: standardResourceDefinitionByKey.tents.unit, defaultQuantity: defaultInventory.tents },
+  medicalStaff: { key: "medicalStaff", name: standardResourceDefinitionByKey.medicalStaff.name, unit: standardResourceDefinitionByKey.medicalStaff.unit, defaultQuantity: defaultInventory.medicalStaff },
+  blankets: { key: "blankets", name: standardResourceDefinitionByKey.blankets.name, unit: standardResourceDefinitionByKey.blankets.unit, defaultQuantity: defaultInventory.blankets }
 };
 const resourceDefinitions = Object.values(resourceDefinitionByKey);
 const resourceNameSuggestions = resourceDefinitions.map(resource => resource.name);
@@ -104,7 +111,7 @@ export function AllocationPage() {
   const addStatusTimeoutRef = useRef<number | null>(null);
   const editModalRef = useRef<HTMLFormElement | null>(null);
   const mutation = useMutation({
-    mutationFn: ({ resources }: AllocationMutationPayload) => allocateResources(resources)
+    mutationFn: (payload: AllocationMutationPayload) => allocateResources(payload)
   });
 
   useEffect(() => () => clearAddStatusTimeout(), []);
@@ -117,8 +124,6 @@ export function AllocationPage() {
   const allocationItems = allocationResult?.allocations ?? [];
   const allocationError = mutation.error ? `Kaynak dağıtımı hesaplanamadı: ${mutation.error.message}` : null;
   const activeInventoryRows = inventory.map(resource => ({ ...resource, quantity: toSafeAmount(resource.quantity) }));
-  const customResourceCount = inventory.filter(resource => !resource.systemKey).length;
-  const hasCustomResources = customResourceCount > 0;
   const canSaveEditDraft = editDraft.every(isEditDraftResourceFieldValid);
 
   function clearAddStatusTimeout() {
@@ -170,7 +175,7 @@ export function AllocationPage() {
     }
     setInventory(nextInventory);
     setInventoryMessage(null);
-    mutation.reset();
+    resetAllocationResultAfterInventoryChange(() => mutation.reset());
     return true;
   }
 
@@ -248,7 +253,7 @@ export function AllocationPage() {
 
   function submitAllocation() {
     setAddFormErrors({});
-    mutation.mutate({ resources: toAllocationResources(inventory) });
+    mutation.mutate(buildAllocationRequestFromInventory(inventory));
   }
 
   return (
@@ -354,11 +359,9 @@ export function AllocationPage() {
             {mutation.isPending ? "Hesaplanıyor…" : "Dağıtımı hesapla"}
           </button>
         </div>
-        {hasCustomResources && (
-          <p className="allocation-note">
-            Özel kaynaklar envanterde saklanır. Mevcut dağıtım hesabı standart kaynakları kullanır.
-          </p>
-        )}
+        <p className="allocation-note">
+          Tüm aktif envanter kaynakları dağıtım hesabına dahil edilir.
+        </p>
         {allocationError && <p className="error-box" role="alert">{allocationError}</p>}
       </section>
 
@@ -366,29 +369,15 @@ export function AllocationPage() {
         <section className="panel"><h2>Açıklama</h2><p>{allocationResult.explanation}</p></section>
         <section className="panel table-panel">
           <h2>Önerilen dağıtım</h2>
-          <div className="table-scroll">
-            <table className="city-allocation-table">
-              <thead>
-                <tr>
-                  <th>Şehir</th>
-                  <th>Su</th>
-                  <th>Çadır</th>
-                  <th>Sağlık</th>
-                  <th>Battaniye</th>
-                </tr>
-              </thead>
-              <tbody>
-                {allocationItems.map(item => (
-                  <tr key={item.city}>
-                    <td><strong>{item.city}</strong></td>
-                    <td>{item.waterLiters}</td>
-                    <td>{item.tents}</td>
-                    <td>{item.medicalStaff}</td>
-                    <td>{item.blankets}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="allocation-destination-grid">
+            {allocationItems.length > 0 ? allocationItems.map(item => (
+              <article className="allocation-destination-card" key={item.city}>
+                <h3>{item.city}</h3>
+                <AllocationResourceList resources={allocationDisplayResources(item)} />
+              </article>
+            )) : (
+              <p className="empty-state">Dağıtım yapılabilecek şehir bulunamadı.</p>
+            )}
           </div>
         </section>
         <UnallocatedResourcesTable resources={allocationResult.unallocated} />
@@ -529,11 +518,11 @@ function ResourceDatalists() {
 }
 
 function UnallocatedResourcesTable({ resources }: { resources?: AllocationUnallocated }) {
-  const rows: UnallocatedRow[] = resourceDefinitions.map(resource => ({
-    id: resource.key,
+  const rows: UnallocatedRow[] = unallocatedDisplayResources(resources).map(resource => ({
+    id: resource.id,
     label: resource.name,
     unit: resource.unit,
-    amount: toSafeAmount(resources?.[resource.key])
+    amount: toSafeAmount(resource.quantity)
   }));
   const allAllocated = rows.every(row => row.amount === 0);
 
@@ -934,19 +923,6 @@ function isEditDraftResourceFieldValid(resource: InventoryEditDraftResource): bo
   return validateResourceName(resource.name).ok && validateResourceUnit(resource.unit).ok;
 }
 
-function toAllocationResources(inventory: InventoryResource[]): AllocationResources {
-  return {
-    waterLiters: systemResourceAmount(inventory, "waterLiters"),
-    tents: systemResourceAmount(inventory, "tents"),
-    medicalStaff: systemResourceAmount(inventory, "medicalStaff"),
-    blankets: systemResourceAmount(inventory, "blankets")
-  };
-}
-
-function systemResourceAmount(inventory: InventoryResource[], systemKey: ResourceKey): number {
-  return toSafeAmount(inventory.find(resource => resource.systemKey === systemKey)?.quantity);
-}
-
 function isStoredInventoryQuantity(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
@@ -969,17 +945,6 @@ function readStoredText(value: unknown, maxLength: number): string | null {
 function isSameResourceAndUnit(left: InventoryResource, right: InventoryResource): boolean {
   return normalizeForComparison(left.name) === normalizeForComparison(right.name)
     && normalizeForComparison(left.unit) === normalizeForComparison(right.unit);
-}
-
-function toSafeAmount(value: number | undefined): number {
-  const amount = Number(value ?? 0);
-  return Number.isFinite(amount) ? Math.max(0, Math.trunc(amount)) : 0;
-}
-
-function formatQuantity(amount: number, unit: string | undefined): string {
-  const trimmedUnit = String(unit ?? "").trim();
-  const formattedAmount = amount.toLocaleString("tr-TR");
-  return trimmedUnit ? `${formattedAmount} ${trimmedUnit}` : formattedAmount;
 }
 
 function normalizeDisplayText(value: string): string {
