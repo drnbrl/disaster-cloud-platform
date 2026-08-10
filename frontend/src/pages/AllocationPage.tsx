@@ -1,158 +1,281 @@
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
 import { Link } from "react-router-dom";
 import { allocateResources } from "../api";
-import type { AllocationResources, AllocationUnallocated, CustomResourceCategory, CustomResourceInput } from "../types";
+import type { AllocationResources, AllocationUnallocated } from "../types";
 
-const initial: AllocationResources = { waterLiters: 500, tents: 100, medicalStaff: 20, blankets: 50 };
-const maxCustomResources = 20;
-const categoryLabels: Record<CustomResourceCategory, string> = {
-  water: "Su",
-  food: "Gıda",
-  shelter: "Barınma",
-  medical: "Sağlık",
-  electricity: "Elektrik",
-  general: "Genel"
-};
-const customResourceCategories = Object.keys(categoryLabels) as CustomResourceCategory[];
-const fixedResourceFields = [
-  { key: "waterLiters", label: "Su (litre)" },
-  { key: "tents", label: "Çadır" },
-  { key: "medicalStaff", label: "Sağlık personeli" },
-  { key: "blankets", label: "Battaniye" }
-] satisfies ReadonlyArray<{ key: keyof AllocationResources; label: string }>;
-const unallocatedResources = [
-  { id: "waterLiters", key: "waterLiters", label: "Su", unit: "litre" },
-  { id: "tents", key: "tents", label: "Çadır", unit: "adet" },
-  { id: "medicalStaff", key: "medicalStaff", label: "Sağlık personeli", unit: "kişi" },
-  { id: "blankets", key: "blankets", label: "Battaniye", unit: "adet" }
-] satisfies ReadonlyArray<{ id: string; key: keyof AllocationResources; label: string; unit: string }>;
-const confirmUnaddedResourcesMessage = "Eklediğiniz özel kaynakları dağıtıma dahil etmek için önce Ekle butonuna basın.";
+type ResourceKey = keyof AllocationResources;
+type InventoryState = Partial<Record<ResourceKey, number>>;
+type InventoryDraft = Partial<Record<ResourceKey, string>>;
 
-type CustomResourceErrorField = "name" | "quantity" | "unit";
-type CustomResourceErrors = Partial<Record<CustomResourceErrorField, string>>;
-
-interface CustomResourceRow {
-  id: string;
-  name: string;
-  quantity: string;
+interface ResourceDefinition {
+  key: ResourceKey;
+  label: string;
   unit: string;
-  category: CustomResourceCategory;
-  isAdded: boolean;
-  errors: CustomResourceErrors;
 }
 
 type AllocationMutationPayload = {
   resources: AllocationResources;
 };
 
-type CustomResourceParseResult =
-  | { ok: true; resources: CustomResourceInput[] }
-  | { ok: false; message: string };
-
 type UnallocatedRow = {
   id: string;
   label: string;
   unit: string;
   amount: number;
-  category?: CustomResourceCategory;
 };
 
+const inventoryStorageKey = "disaster-platform-resource-inventory-v1";
+const inventoryStorageVersion = 1;
+const defaultInventory: Readonly<AllocationResources> = { waterLiters: 500, tents: 100, medicalStaff: 20, blankets: 50 };
+const resourceDefinitionByKey: Record<ResourceKey, ResourceDefinition> = {
+  waterLiters: { key: "waterLiters", label: "Su", unit: "litre" },
+  tents: { key: "tents", label: "Çadır", unit: "adet" },
+  medicalStaff: { key: "medicalStaff", label: "Sağlık personeli", unit: "kişi" },
+  blankets: { key: "blankets", label: "Battaniye", unit: "adet" }
+};
+const resourceDefinitions = Object.values(resourceDefinitionByKey);
+
 export function AllocationPage() {
-  const [resources, setResources] = useState(initial);
-  const [customResources, setCustomResources] = useState<CustomResourceRow[]>([]);
-  const [customResourceError, setCustomResourceError] = useState<string | null>(null);
+  const [initialInventoryLoad] = useState(loadInventoryFromStorage);
+  const [inventory, setInventory] = useState<InventoryState>(initialInventoryLoad.inventory);
+  const [inventoryMessage, setInventoryMessage] = useState<string | null>(initialInventoryLoad.message);
+  const [addForm, setAddForm] = useState<{ resourceKey: "" | ResourceKey; quantity: string }>({ resourceKey: "", quantity: "" });
+  const [addFormError, setAddFormError] = useState<string | null>(null);
+  const [addSucceeded, setAddSucceeded] = useState(false);
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editDraft, setEditDraft] = useState<InventoryDraft>({});
+  const [editError, setEditError] = useState<string | null>(null);
+  const addStatusTimeoutRef = useRef<number | null>(null);
+  const editModalRef = useRef<HTMLFormElement | null>(null);
   const mutation = useMutation({
-    mutationFn: ({ resources: fixedResources }: AllocationMutationPayload) =>
-      allocateResources(fixedResources)
+    mutationFn: ({ resources }: AllocationMutationPayload) => allocateResources(resources)
   });
+
+  useEffect(() => () => clearAddStatusTimeout(), []);
+
+  useEffect(() => {
+    if (isEditOpen) editModalRef.current?.focus();
+  }, [isEditOpen]);
+
   const allocationResult = mutation.data;
   const allocationItems = allocationResult?.allocations ?? [];
   const allocationError = mutation.error ? `Kaynak dağıtımı hesaplanamadı: ${mutation.error.message}` : null;
-  function update(field: keyof AllocationResources, value: string) {
-    setResources(current => ({ ...current, [field]: parseNonNegativeInteger(value) }));
+  const selectedResource = addForm.resourceKey ? resourceDefinitionByKey[addForm.resourceKey] : null;
+  const addQuantityError = addForm.quantity.trim() && !isPositiveIntegerInput(addForm.quantity)
+    ? "Miktar 1 veya daha büyük tam sayı olmalıdır."
+    : null;
+  const addResourceTypeError = addForm.quantity.trim() && !selectedResource ? "Kaynak türü seçilmelidir." : null;
+  const canAddResource = Boolean(selectedResource) && isPositiveIntegerInput(addForm.quantity);
+  const activeInventoryRows = resourceDefinitions
+    .filter(resource => hasOwnResource(inventory, resource.key))
+    .map(resource => ({ ...resource, amount: toSafeAmount(inventory[resource.key]) }));
+  const editRows = resourceDefinitions.filter(resource => hasOwnResource(editDraft, resource.key));
+  const canSaveEditDraft = editRows.every(resource => isZeroOrPositiveIntegerInput(editDraft[resource.key] ?? ""));
+
+  function clearAddStatusTimeout() {
+    if (addStatusTimeoutRef.current !== null) {
+      window.clearTimeout(addStatusTimeoutRef.current);
+      addStatusTimeoutRef.current = null;
+    }
   }
-  function addCustomResource() {
-    if (customResources.length >= maxCustomResources) {
-      setCustomResourceError("En fazla 20 özel kaynak ekleyebilirsiniz.");
+
+  function clearAddSuccess() {
+    clearAddStatusTimeout();
+    setAddSucceeded(false);
+  }
+
+  function updateAddResourceKey(value: string) {
+    clearAddSuccess();
+    setAddFormError(null);
+    setAddForm(current => ({ ...current, resourceKey: isResourceKey(value) ? value : "" }));
+  }
+
+  function updateAddQuantity(value: string) {
+    clearAddSuccess();
+    setAddFormError(null);
+    setAddForm(current => ({ ...current, quantity: value }));
+  }
+
+  function commitInventory(nextInventory: InventoryState): boolean {
+    const persistResult = saveInventoryToStorage(nextInventory);
+    if (!persistResult.ok) {
+      setInventoryMessage(persistResult.message);
+      return false;
+    }
+    setInventory(nextInventory);
+    setInventoryMessage(null);
+    mutation.reset();
+    return true;
+  }
+
+  function submitAddResource(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedResource) {
+      setAddFormError("Kaynak türü seçilmelidir.");
       return;
     }
-    setCustomResourceError(null);
-    setCustomResources(current => [
-      ...current,
-      { id: crypto.randomUUID(), name: "", quantity: "", unit: "", category: "general", isAdded: false, errors: {} }
-    ]);
+    const quantity = parsePositiveIntegerInput(addForm.quantity);
+    if (quantity === null) {
+      setAddFormError("Miktar 1 veya daha büyük tam sayı olmalıdır.");
+      return;
+    }
+
+    const nextInventory: InventoryState = {
+      ...inventory,
+      [selectedResource.key]: toSafeAmount(inventory[selectedResource.key]) + quantity
+    };
+    if (!commitInventory(nextInventory)) return;
+
+    setAddForm({ resourceKey: "", quantity: "" });
+    setAddFormError(null);
+    setAddSucceeded(true);
+    clearAddStatusTimeout();
+    addStatusTimeoutRef.current = window.setTimeout(() => {
+      setAddSucceeded(false);
+      addStatusTimeoutRef.current = null;
+    }, 1400);
   }
-  function updateCustomResource<K extends keyof Omit<CustomResourceRow, "id">>(id: string, field: K, value: CustomResourceRow[K]) {
-    setCustomResourceError(null);
-    setCustomResources(current => current.map(row => {
-      if (row.id !== id) return row;
-      const errors = { ...row.errors };
-      if (isCustomResourceErrorField(field)) delete errors[field];
-      return { ...row, [field]: value, isAdded: false, errors };
-    }));
+
+  function openEditInventory() {
+    const nextDraft: InventoryDraft = {};
+    for (const resource of resourceDefinitions) {
+      if (hasOwnResource(inventory, resource.key)) nextDraft[resource.key] = String(toSafeAmount(inventory[resource.key]));
+    }
+    setEditDraft(nextDraft);
+    setEditError(null);
+    setIsEditOpen(true);
   }
-  function confirmCustomResource(id: string) {
-    setCustomResourceError(null);
-    setCustomResources(current => current.map(row => {
-      if (row.id !== id) return row;
-      const errors = validateCustomResourceRow(row);
-      return Object.keys(errors).length ? { ...row, isAdded: false, errors } : { ...row, isAdded: true, errors: {} };
-    }));
+
+  function cancelEditInventory() {
+    setIsEditOpen(false);
+    setEditDraft({});
+    setEditError(null);
   }
-  function removeCustomResource(id: string) {
-    setCustomResourceError(null);
-    setCustomResources(current => current.filter(row => row.id !== id));
+
+  function updateEditQuantity(key: ResourceKey, value: string) {
+    setEditError(null);
+    setEditDraft(current => ({ ...current, [key]: value }));
   }
+
+  function deleteDraftResource(key: ResourceKey) {
+    const resource = resourceDefinitionByKey[key];
+    const confirmed = window.confirm(`${resource.label} kaynağını envanterden kaldırmak istediğinize emin misiniz?`);
+    if (!confirmed) return;
+    setEditError(null);
+    setEditDraft(current => {
+      const nextDraft = { ...current };
+      delete nextDraft[key];
+      return nextDraft;
+    });
+  }
+
+  function saveEditInventory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextInventory: InventoryState = {};
+    for (const resource of resourceDefinitions) {
+      if (!hasOwnResource(editDraft, resource.key)) continue;
+      const amount = parseZeroOrPositiveIntegerInput(editDraft[resource.key] ?? "");
+      if (amount === null) {
+        setEditError("Miktarlar sıfır veya daha büyük tam sayı olmalıdır.");
+        return;
+      }
+      nextInventory[resource.key] = amount;
+    }
+    if (!commitInventory(nextInventory)) return;
+    setIsEditOpen(false);
+    setEditDraft({});
+    setEditError(null);
+  }
+
   function submitAllocation() {
-    const parsedCustomResources = parseCustomResources(customResources);
-    if (!parsedCustomResources.ok) {
-      setCustomResourceError(parsedCustomResources.message);
-      return;
-    }
-    setCustomResourceError(null);
-    mutation.mutate({ resources });
+    setAddFormError(null);
+    mutation.mutate({ resources: toAllocationResources(inventory) });
   }
+
   return (
     <main className="page">
       <Link to="/admin">← Dashboard</Link>
       <header className="hero compact"><h1>Kaynak dağıtım copilot’u</h1><p>Miktarları algoritma hesaplar; AI yalnızca sonucu açıklar.</p></header>
-      <section className="panel">
-        <div className="resource-grid">
-          {fixedResourceFields.map(field => (
-            <Resource key={field.key} label={field.label} value={resources[field.key]} change={value => update(field.key, value)} />
-          ))}
+
+      <section className="panel allocation-control-panel">
+        <div className="inventory-heading">
+          <h2>Mevcut kaynaklar</h2>
+          <button className="button secondary" type="button" onClick={openEditInventory}>
+            Kaynakları düzenle
+          </button>
         </div>
-        <button className="button secondary add-resource-button" type="button" disabled={customResources.length >= maxCustomResources} onClick={addCustomResource}>
-          + Kaynak Ekle
-        </button>
-        {customResources.length > 0 && (
-          <div className="custom-resource-list">
-            {customResources.map(row => (
-              <div className="custom-resource-row" key={row.id}>
-                <label>Kaynak adı<input type="text" value={row.name} onChange={event => updateCustomResource(row.id, "name", event.target.value)} />{row.errors.name && <span className="field-error">{row.errors.name}</span>}</label>
-                <label>Miktar<input type="number" min={1} step={1} value={row.quantity} onChange={event => updateCustomResource(row.id, "quantity", event.target.value)} />{row.errors.quantity && <span className="field-error">{row.errors.quantity}</span>}</label>
-                <label>Birim<input type="text" value={row.unit} onChange={event => updateCustomResource(row.id, "unit", event.target.value)} />{row.errors.unit && <span className="field-error">{row.errors.unit}</span>}</label>
-                <label>
-                  İhtiyaç kategorisi
-                  <select value={row.category} onChange={event => updateCustomResource(row.id, "category", event.target.value as CustomResourceCategory)}>
-                    {customResourceCategories.map(category => <option key={category} value={category}>{categoryLabels[category]}</option>)}
-                  </select>
-                </label>
-                <div className="custom-resource-actions">
-                  <button className={`button custom-resource-confirm${row.isAdded ? " success" : ""}`} type="button" disabled={row.isAdded} onClick={() => confirmCustomResource(row.id)}>
-                    {row.isAdded ? "✓ Eklendi" : "Ekle"}
-                  </button>
-                  <button className="button danger custom-resource-delete" type="button" onClick={() => removeCustomResource(row.id)}>Sil</button>
-                </div>
-              </div>
+
+        {inventoryMessage && <p className="error-box" role="alert">{inventoryMessage}</p>}
+
+        {activeInventoryRows.length > 0 ? (
+          <div className="current-resource-grid" aria-label="Mevcut kaynaklar">
+            {activeInventoryRows.map(resource => (
+              <article className="current-resource-card" key={resource.key}>
+                <span>{resource.label}</span>
+                <strong>{formatQuantity(resource.amount, resource.unit)}</strong>
+              </article>
             ))}
           </div>
+        ) : (
+          <p className="empty-state">Henüz kullanılabilir kaynak bulunmuyor.</p>
         )}
-        {customResourceError && <p className="error-box">{customResourceError}</p>}
-        <button className="button" disabled={mutation.isPending} onClick={submitAllocation}>{mutation.isPending ? "Hesaplanıyor…" : "Dağıtımı hesapla"}</button>
+
+        <form className="resource-add-section" onSubmit={submitAddResource} noValidate>
+          <div className="resource-add-header">
+            <h2>Kaynak ekle</h2>
+            <p className="field-helper">* Zorunlu alan</p>
+          </div>
+
+          <div className="resource-add-form">
+            <label>
+              <span className="field-label">Kaynak türü <span className="required-marker" aria-hidden="true">*</span></span>
+              <select required value={addForm.resourceKey} onChange={event => updateAddResourceKey(event.target.value)} aria-invalid={Boolean(addResourceTypeError)}>
+                <option value="">Seçiniz</option>
+                {resourceDefinitions.map(resource => (
+                  <option key={resource.key} value={resource.key}>{resource.label}</option>
+                ))}
+              </select>
+              {addResourceTypeError && <span className="field-error">{addResourceTypeError}</span>}
+            </label>
+
+            <label>
+              <span className="field-label">Miktar <span className="required-marker" aria-hidden="true">*</span></span>
+              <input
+                inputMode="numeric"
+                min={1}
+                pattern="[1-9][0-9]*"
+                required
+                step={1}
+                type="number"
+                value={addForm.quantity}
+                onChange={event => updateAddQuantity(event.target.value)}
+                aria-invalid={Boolean(addQuantityError)}
+              />
+              {addQuantityError && <span className="field-error">{addQuantityError}</span>}
+            </label>
+
+            <div className="resource-unit-display" aria-live="polite">
+              <span>Birim</span>
+              <strong>{selectedResource?.unit ?? "-"}</strong>
+            </div>
+
+            <button className={`button resource-add-submit${addSucceeded ? " success" : ""}`} type="submit" disabled={!canAddResource || addSucceeded}>
+              {addSucceeded ? "Eklendi ✓" : "Ekle"}
+            </button>
+          </div>
+
+          {addFormError && <p className="error-box" role="alert">{addFormError}</p>}
+        </form>
+
+        <div className="allocation-actions">
+          <button className="button" type="button" disabled={mutation.isPending} onClick={submitAllocation}>
+            {mutation.isPending ? "Hesaplanıyor…" : "Dağıtımı hesapla"}
+          </button>
+        </div>
         {allocationError && <p className="error-box" role="alert">{allocationError}</p>}
       </section>
+
       {allocationResult && <>
         <section className="panel"><h2>Açıklama</h2><p>{allocationResult.explanation}</p></section>
         <section className="panel table-panel">
@@ -166,7 +289,6 @@ export function AllocationPage() {
                   <th>Çadır</th>
                   <th>Sağlık</th>
                   <th>Battaniye</th>
-                  <th>Ek kaynaklar</th>
                 </tr>
               </thead>
               <tbody>
@@ -177,7 +299,6 @@ export function AllocationPage() {
                     <td>{item.tents}</td>
                     <td>{item.medicalStaff}</td>
                     <td>{item.blankets}</td>
-                    <td><CustomResourceAllocationList resources={item.customResources} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -186,45 +307,81 @@ export function AllocationPage() {
         </section>
         <UnallocatedResourcesTable resources={allocationResult.unallocated} />
       </>}
+
+      {isEditOpen && (
+        <div className="modal-backdrop">
+          <form
+            className="modal-panel resource-edit-panel"
+            ref={editModalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="resource-edit-title"
+            tabIndex={-1}
+            onKeyDown={event => {
+              if (event.key === "Escape") cancelEditInventory();
+            }}
+            onSubmit={saveEditInventory}
+          >
+            <div className="modal-header">
+              <h2 id="resource-edit-title">Kaynakları düzenle</h2>
+              <button className="link-button" type="button" onClick={cancelEditInventory}>Kapat</button>
+            </div>
+
+            {editRows.length > 0 ? (
+              <div className="edit-resource-list">
+                {editRows.map(resource => {
+                  const value = editDraft[resource.key] ?? "";
+                  const hasError = !isZeroOrPositiveIntegerInput(value);
+                  return (
+                    <div className="edit-resource-row" key={resource.key}>
+                      <div className="edit-resource-meta">
+                        <strong>{resource.label}</strong>
+                        <span>{resource.unit}</span>
+                      </div>
+                      <label>
+                        Miktar
+                        <input
+                          aria-invalid={hasError}
+                          inputMode="numeric"
+                          min={0}
+                          pattern="[0-9]+"
+                          required
+                          step={1}
+                          type="number"
+                          value={value}
+                          onChange={event => updateEditQuantity(resource.key, event.target.value)}
+                        />
+                        {hasError && <span className="field-error">Miktar sıfır veya daha büyük tam sayı olmalıdır.</span>}
+                      </label>
+                      <button className="button danger edit-resource-delete" type="button" onClick={() => deleteDraftResource(resource.key)}>Sil</button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="empty-state">Henüz kullanılabilir kaynak bulunmuyor.</p>
+            )}
+
+            {editError && <p className="error-box" role="alert">{editError}</p>}
+
+            <div className="modal-actions">
+              <button className="button secondary" type="button" onClick={cancelEditInventory}>İptal</button>
+              <button className="button" type="submit" disabled={!canSaveEditDraft}>Değişiklikleri kaydet</button>
+            </div>
+          </form>
+        </div>
+      )}
     </main>
   );
 }
 
-function Resource({ label, value, change }: { label: string; value: number; change: (value: string) => void }) {
-  return <label>{label}<input type="number" min={0} step={1} value={value} onChange={e => change(e.target.value)} /></label>;
-}
-
-function CustomResourceAllocationList({ resources }: { resources?: CustomResourceInput[] }) {
-  const visibleResources = (resources ?? []).filter(resource => toSafeAmount(resource.quantity) > 0);
-  if (!visibleResources.length) return <span className="muted">-</span>;
-
-  return (
-    <ul className="custom-allocation-list">
-      {visibleResources.map((resource, index) => (
-        <li key={`${resource.name}-${index}`}>
-          <strong>{String(resource.name ?? "").trim() || "Özel kaynak"}</strong>
-          <span>{formatQuantity(toSafeAmount(resource.quantity), resource.unit)}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 function UnallocatedResourcesTable({ resources }: { resources?: AllocationUnallocated }) {
-  const fixedRows: UnallocatedRow[] = unallocatedResources.map(resource => ({
-    id: resource.id,
+  const rows: UnallocatedRow[] = resourceDefinitions.map(resource => ({
+    id: resource.key,
     label: resource.label,
     unit: resource.unit,
     amount: toSafeAmount(resources?.[resource.key])
   }));
-  const customRows: UnallocatedRow[] = (resources?.customResources ?? []).map((resource, index) => ({
-    id: `custom-${index}-${resource.name}`,
-    label: String(resource.name ?? "").trim() || "Özel kaynak",
-    unit: String(resource.unit ?? "").trim(),
-    category: resource.category,
-    amount: toSafeAmount(resource.quantity)
-  }));
-  const rows = [...fixedRows, ...customRows];
   const allAllocated = rows.every(row => row.amount === 0);
 
   return (
@@ -250,10 +407,7 @@ function UnallocatedResourcesTable({ resources }: { resources?: AllocationUnallo
                 const hasRemaining = row.amount > 0;
                 return (
                   <tr key={row.id}>
-                    <td>
-                      <strong>{row.label}</strong>
-                      {row.category && <small>{categoryLabel(row.category)}</small>}
-                    </td>
+                    <td><strong>{row.label}</strong></td>
                     <td>{formatQuantity(row.amount, row.unit)}</td>
                     <td>
                       <span className={`badge ${hasRemaining ? "badge-allocation-remaining" : "badge-allocation-complete"}`}>
@@ -271,48 +425,94 @@ function UnallocatedResourcesTable({ resources }: { resources?: AllocationUnallo
   );
 }
 
-function parseNonNegativeInteger(value: string): number {
-  const parsed = Number.parseInt(value || "0", 10);
-  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
-}
-
-function parseCustomResources(rows: CustomResourceRow[]): CustomResourceParseResult {
-  if (rows.length > maxCustomResources) {
-    return { ok: false, message: "En fazla 20 özel kaynak ekleyebilirsiniz." };
-  }
-  if (rows.some(row => !row.isAdded && hasCustomResourceInput(row))) {
-    return { ok: false, message: confirmUnaddedResourcesMessage };
-  }
-  const resources = rows.filter(row => row.isAdded).map(row => {
-    const quantity = Number(row.quantity);
+function loadInventoryFromStorage(): { inventory: InventoryState; message: string | null } {
+  if (typeof window === "undefined") return { inventory: createDefaultInventory(), message: null };
+  try {
+    const savedInventory = window.localStorage.getItem(inventoryStorageKey);
+    if (!savedInventory) return { inventory: createDefaultInventory(), message: null };
+    const parsedInventory = JSON.parse(savedInventory) as unknown;
+    const inventory = parseStoredInventory(parsedInventory);
+    if (!inventory) {
+      return {
+        inventory: createDefaultInventory(),
+        message: "Kayıtlı kaynak envanteri geçersiz. Varsayılan kaynaklar yüklendi."
+      };
+    }
+    return { inventory, message: null };
+  } catch {
     return {
-      name: row.name.trim(),
-      quantity,
-      unit: row.unit.trim(),
-      category: row.category
+      inventory: createDefaultInventory(),
+      message: "Kayıtlı kaynak envanteri okunamadı. Varsayılan kaynaklar yüklendi."
     };
-  });
-  const invalid = resources.find(resource => !resource.name || !resource.unit || !Number.isInteger(resource.quantity) || resource.quantity <= 0);
-  if (invalid) {
-    return { ok: false, message: "Özel kaynaklarda ad ve birim zorunludur; miktar sıfırdan büyük tam sayı olmalıdır." };
   }
-  return { ok: true, resources };
 }
 
-function validateCustomResourceRow(row: CustomResourceRow): CustomResourceErrors {
-  const errors: CustomResourceErrors = {};
-  if (!row.name.trim()) errors.name = "Kaynak adı zorunludur.";
-  if (!Number.isInteger(Number(row.quantity)) || Number(row.quantity) <= 0) errors.quantity = "Miktar sıfırdan büyük olmalıdır.";
-  if (!row.unit.trim()) errors.unit = "Birim zorunludur.";
-  return errors;
+function saveInventoryToStorage(inventory: InventoryState): { ok: true } | { ok: false; message: string } {
+  if (typeof window === "undefined") return { ok: true };
+  try {
+    window.localStorage.setItem(inventoryStorageKey, JSON.stringify({ version: inventoryStorageVersion, inventory }));
+    return { ok: true };
+  } catch {
+    return {
+      ok: false,
+      message: "Kaynak envanteri tarayıcıya kaydedilemedi. Değişiklikler uygulanmadı."
+    };
+  }
 }
 
-function hasCustomResourceInput(row: CustomResourceRow): boolean {
-  return Boolean(row.name.trim() || row.quantity.trim() || row.unit.trim());
+function parseStoredInventory(value: unknown): InventoryState | null {
+  if (!isRecord(value) || value.version !== inventoryStorageVersion || !isRecord(value.inventory)) return null;
+  const inventory: InventoryState = {};
+  for (const [key, quantity] of Object.entries(value.inventory)) {
+    if (!isResourceKey(key) || !isInventoryQuantity(quantity)) return null;
+    inventory[key] = quantity;
+  }
+  return inventory;
 }
 
-function isCustomResourceErrorField(field: PropertyKey): field is CustomResourceErrorField {
-  return field === "name" || field === "quantity" || field === "unit";
+function createDefaultInventory(): InventoryState {
+  return { ...defaultInventory };
+}
+
+function toAllocationResources(inventory: InventoryState): AllocationResources {
+  return {
+    waterLiters: toSafeAmount(inventory.waterLiters),
+    tents: toSafeAmount(inventory.tents),
+    medicalStaff: toSafeAmount(inventory.medicalStaff),
+    blankets: toSafeAmount(inventory.blankets)
+  };
+}
+
+function parsePositiveIntegerInput(value: string): number | null {
+  if (!isPositiveIntegerInput(value)) return null;
+  const amount = Number(value);
+  return Number.isSafeInteger(amount) ? amount : null;
+}
+
+function parseZeroOrPositiveIntegerInput(value: string): number | null {
+  if (!isZeroOrPositiveIntegerInput(value)) return null;
+  const amount = Number(value);
+  return Number.isSafeInteger(amount) ? amount : null;
+}
+
+function isPositiveIntegerInput(value: string): boolean {
+  return /^[1-9]\d*$/.test(value.trim());
+}
+
+function isZeroOrPositiveIntegerInput(value: string): boolean {
+  return /^(0|[1-9]\d*)$/.test(value.trim());
+}
+
+function isInventoryQuantity(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isResourceKey(value: string): value is ResourceKey {
+  return Object.prototype.hasOwnProperty.call(resourceDefinitionByKey, value);
+}
+
+function hasOwnResource<T extends Partial<Record<ResourceKey, unknown>>>(inventory: T, key: ResourceKey): boolean {
+  return Object.prototype.hasOwnProperty.call(inventory, key);
 }
 
 function toSafeAmount(value: number | undefined): number {
@@ -326,8 +526,6 @@ function formatQuantity(amount: number, unit: string | undefined): string {
   return trimmedUnit ? `${formattedAmount} ${trimmedUnit}` : formattedAmount;
 }
 
-function categoryLabel(category: string): string {
-  return customResourceCategories.includes(category as CustomResourceCategory)
-    ? categoryLabels[category as CustomResourceCategory]
-    : categoryLabels.general;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
 }
