@@ -1,7 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { confirmNewPassword, login } from "../auth";
+import { confirmNewPassword, isAuthenticated, isLocalAuthMode, login } from "../auth";
 
 const NEW_PASSWORD_MIN_LENGTH = 8;
 
@@ -14,8 +14,20 @@ export function AdminLoginPage() {
   const [newPasswordRequired, setNewPasswordRequired] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (isLocalAuthMode) return;
+    let ignore = false;
+    void isAuthenticated().then(authenticated => {
+      if (!ignore && authenticated) navigate("/admin", { replace: true });
+    });
+    return () => { ignore = true; };
+  }, [navigate]);
+
   const loginMutation = useMutation({
-    mutationFn: (credentials: { username: string; password: string }) => login(credentials.username, credentials.password),
+    mutationFn: async (credentials: { username: string; password: string }) => {
+      if (!isLocalAuthMode && await isAuthenticated()) return { status: "signedIn" as const };
+      return login(credentials.username, credentials.password);
+    },
     onSuccess: result => {
       setFormError(null);
       if (result.status === "signedIn") {
