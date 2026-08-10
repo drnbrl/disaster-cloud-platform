@@ -44,7 +44,6 @@ interface CustomResourceRow {
 
 type AllocationMutationPayload = {
   resources: AllocationResources;
-  customResources: CustomResourceInput[];
 };
 
 type CustomResourceParseResult =
@@ -64,8 +63,8 @@ export function AllocationPage() {
   const [customResources, setCustomResources] = useState<CustomResourceRow[]>([]);
   const [customResourceError, setCustomResourceError] = useState<string | null>(null);
   const mutation = useMutation({
-    mutationFn: ({ resources: fixedResources, customResources: parsedCustomResources }: AllocationMutationPayload) =>
-      allocateResources(fixedResources, parsedCustomResources)
+    mutationFn: ({ resources: fixedResources }: AllocationMutationPayload) =>
+      allocateResources(fixedResources)
   });
   const allocationResult = mutation.data;
   const allocationItems = allocationResult?.allocations ?? [];
@@ -112,7 +111,7 @@ export function AllocationPage() {
       return;
     }
     setCustomResourceError(null);
-    mutation.mutate({ resources, customResources: parsedCustomResources.resources });
+    mutation.mutate({ resources });
   }
   return (
     <main className="page">
