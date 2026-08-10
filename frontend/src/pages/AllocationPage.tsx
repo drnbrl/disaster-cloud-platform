@@ -67,6 +67,9 @@ export function AllocationPage() {
     mutationFn: ({ resources: fixedResources, customResources: parsedCustomResources }: AllocationMutationPayload) =>
       allocateResources(fixedResources, parsedCustomResources)
   });
+  const allocationResult = mutation.data;
+  const allocationItems = allocationResult?.allocations ?? [];
+  const allocationError = mutation.error ? `Kaynak dağıtımı hesaplanamadı: ${mutation.error.message}` : null;
   function update(field: keyof AllocationResources, value: string) {
     setResources(current => ({ ...current, [field]: parseNonNegativeInteger(value) }));
   }
@@ -149,10 +152,10 @@ export function AllocationPage() {
         )}
         {customResourceError && <p className="error-box">{customResourceError}</p>}
         <button className="button" disabled={mutation.isPending} onClick={submitAllocation}>{mutation.isPending ? "Hesaplanıyor…" : "Dağıtımı hesapla"}</button>
-        {mutation.error && <p className="error-box">{mutation.error.message}</p>}
+        {allocationError && <p className="error-box" role="alert">{allocationError}</p>}
       </section>
-      {mutation.data && <>
-        <section className="panel"><h2>Açıklama</h2><p>{mutation.data.explanation}</p></section>
+      {allocationResult && <>
+        <section className="panel"><h2>Açıklama</h2><p>{allocationResult.explanation}</p></section>
         <section className="panel table-panel">
           <h2>Önerilen dağıtım</h2>
           <div className="table-scroll">
@@ -168,7 +171,7 @@ export function AllocationPage() {
                 </tr>
               </thead>
               <tbody>
-                {mutation.data.allocations.map(item => (
+                {allocationItems.map(item => (
                   <tr key={item.city}>
                     <td><strong>{item.city}</strong></td>
                     <td>{item.waterLiters}</td>
@@ -182,7 +185,7 @@ export function AllocationPage() {
             </table>
           </div>
         </section>
-        <UnallocatedResourcesTable resources={mutation.data.unallocated} />
+        <UnallocatedResourcesTable resources={allocationResult.unallocated} />
       </>}
     </main>
   );
