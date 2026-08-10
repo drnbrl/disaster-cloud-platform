@@ -18,6 +18,8 @@ Base path: `/v1`
 }
 ```
 
+`latitude` and `longitude` are optional but must be sent together when supplied. If both are supplied, the stored coordinates are authoritative. If they are omitted, the asynchronous analysis worker attempts server-side address geocoding from the stored `address`, `district` and `city`; geocoding failure does not fail request analysis.
+
 ## Administrator
 Requires `Authorization: Bearer <Cognito access token>`.
 

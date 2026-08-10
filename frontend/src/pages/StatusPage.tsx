@@ -22,6 +22,7 @@ export function StatusPage() {
           <div><span>Operasyon durumu</span><strong>{query.data.requestStatus}</strong></div>
           <div><span>Öncelik</span><PriorityBadge level={query.data.priorityLevel} /></div>
           <div><span>Puan</span><strong>{query.data.priorityScore ?? "Bekleniyor"}</strong></div>
+          {query.data.locationSource === "GEOCODED_ADDRESS" && <article className="full-width"><p>Konum adresten otomatik olarak belirlendi.</p></article>}
           {query.data.summary && <article className="full-width"><h2>AI özeti</h2><p>{query.data.summary}</p></article>}
           {query.data.priorityReasons && <article className="full-width"><h2>Gerekçeler</h2><ul>{query.data.priorityReasons.map(reason => <li key={reason}>{reason}</li>)}</ul></article>}
         </section>

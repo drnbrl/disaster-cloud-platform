@@ -2,6 +2,7 @@ from typing import Any
 
 PUBLIC_FIELDS = {
     "requestId", "createdAt", "updatedAt", "city", "district", "address", "latitude", "longitude",
+    "locationSource", "geocodeLabel",
     "analysisStatus", "requestStatus", "peopleCount", "injuredCount", "needs", "summary",
     "priorityScore", "priorityLevel", "priorityReasons", "aiConfidence", "requiresHumanReview",
 }

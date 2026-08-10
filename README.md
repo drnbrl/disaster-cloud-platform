@@ -105,6 +105,13 @@ python3.12 scripts/seed_requests.py \
   --count 15
 ```
 
+## Optional coordinate backfill
+Existing DynamoDB requests with an address but no coordinates are not automatically reprocessed. After deploying the geocoding-enabled analyzer, review a dry run first:
+```bash
+REQUESTS_TABLE_NAME=your-requests-table backend/.venv/bin/python scripts/backfill_missing_coordinates.py --region your-region --dry-run
+```
+Remove `--dry-run` only when the counts look correct. The script updates only location-related attributes and skips records with any existing valid coordinate.
+
 ## Enable Bedrock
 Confirm the approved model/inference profile is available in your selected AWS Region and supports Converse. Then:
 ```bash

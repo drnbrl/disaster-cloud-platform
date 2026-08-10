@@ -204,6 +204,9 @@ Resources:
             - Effect: Allow
               Action: [bedrock:InvokeModel]
               Resource: "*"
+            - Effect: Allow
+              Action: [geo-places:Geocode]
+              Resource: !Sub "arn:${AWS::Partition}:geo-places:${AWS::Region}::provider/default"
       Events:
         Queue:
           Type: SQS

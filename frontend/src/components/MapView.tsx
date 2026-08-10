@@ -46,7 +46,13 @@ export function MapView({ requests }: { requests: DisasterRequest[] }) {
       const element = document.createElement("button");
       element.className = `map-marker marker-${request.priorityLevel ?? "pending"}`;
       element.title = `${request.city}: ${request.priorityLevel ?? "bekleniyor"}`;
-      const popup = new maplibregl.Popup({ offset: 18 }).setText(`${request.city} | Puan: ${request.priorityScore ?? "-"} | Kişi: ${request.peopleCount ?? "-"}`);
+      const popupText = [
+        request.city,
+        `Puan: ${request.priorityScore ?? "-"}`,
+        `Kişi: ${request.peopleCount ?? "-"}`,
+        locationLabel(request)
+      ].filter(Boolean).join(" | ");
+      const popup = new maplibregl.Popup({ offset: 18 }).setText(popupText);
       markers.push(new maplibregl.Marker({ element }).setLngLat([request.longitude, request.latitude]).setPopup(popup).addTo(map));
     }
     return () => { markers.forEach(marker => marker.remove()); map.remove(); };
@@ -65,4 +71,10 @@ function hasValidCoordinates(request: DisasterRequest): request is DisasterReque
     && request.longitude >= -180
     && request.longitude <= 180
   );
+}
+
+function locationLabel(request: DisasterRequest): string | undefined {
+  if (request.locationSource === "USER_COORDINATES") return "Konum: Kullanıcı koordinatı";
+  if (request.locationSource === "GEOCODED_ADDRESS") return "Konum: Adresten yaklaşık olarak belirlendi";
+  return undefined;
 }

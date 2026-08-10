@@ -1,5 +1,6 @@
 export type PriorityLevel = "low" | "medium" | "high" | "critical";
 export type RequestStatus = "RECEIVED" | "REVIEWED" | "ASSIGNED" | "IN_PROGRESS" | "RESOLVED" | "REJECTED";
+export type LocationSource = "USER_COORDINATES" | "GEOCODED_ADDRESS" | "UNRESOLVED_ADDRESS";
 
 export interface Needs {
   water: boolean;
@@ -19,6 +20,8 @@ export interface DisasterRequest {
   address?: string;
   latitude?: number;
   longitude?: number;
+  locationSource?: LocationSource;
+  geocodeLabel?: string;
   message?: string;
   analysisStatus: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
   requestStatus: RequestStatus;

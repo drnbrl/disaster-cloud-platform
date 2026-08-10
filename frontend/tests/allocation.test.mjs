@@ -86,3 +86,12 @@ test("inventory changes clear stale allocation results", async () => {
   assert.equal(resetCalled, true);
   assert.match(pageSource, /resetAllocationResultAfterInventoryChange\(\(\) => mutation\.reset\(\)\)/);
 });
+
+test("map markers keep priorityLevel as the only marker color source", async () => {
+  const mapViewSource = await readFile(path.join(frontendRoot, "src/components/MapView.tsx"), "utf8");
+
+  assert.match(mapViewSource, /element\.className = `map-marker marker-\$\{request\.priorityLevel \?\? "pending"\}`;/);
+  assert.match(mapViewSource, /setLngLat\(\[request\.longitude, request\.latitude\]\)/);
+  assert.doesNotMatch(mapViewSource, /marker-\$\{request\.locationSource/);
+  assert.doesNotMatch(mapViewSource, /marker-\$\{locationLabel/);
+});

@@ -9,6 +9,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from shared.bedrock_ai import analyze_message
+from shared.geocoding import LocationUpdate, geocode_request_location
 from shared.priority import calculate_priority
 from shared.serialization import serialize_values
 from shared.time_utils import utc_now_iso
@@ -60,7 +61,7 @@ def _stats_update(scope: str, values: dict[str, Any], city: str | None = None) -
     return {"Update": update}
 
 
-def _complete(request_id: str, item: dict[str, Any], analysis: Any, priority: dict[str, Any]) -> None:
+def _complete(request_id: str, item: dict[str, Any], analysis: Any, priority: dict[str, Any], location_update: LocationUpdate) -> None:
     now = utc_now_iso()
     city = item["city"]
     values = {
@@ -84,6 +85,12 @@ def _complete(request_id: str, item: dict[str, Any], analysis: Any, priority: di
         ":gsi2pk": f"CITY#{city}",
         ":gsi2sk": f"{priority['score']:03d}#{item['createdAt']}",
     }
+    location_assignments = []
+    for index, (name, value) in enumerate(location_update.attributes.items()):
+        name_key = f"#location{index}"
+        value_key = f":location{index}"
+        location_assignments.append(f"{name_key}={value_key}")
+        values[value_key] = value
     request_update = {
         "Update": {
             "TableName": os.environ["REQUESTS_TABLE_NAME"],
@@ -94,11 +101,17 @@ def _complete(request_id: str, item: dict[str, Any], analysis: Any, priority: di
                 "priorityLevel=:level, priorityReasons=:reasons, aiConfidence=:confidence, requiresHumanReview=:review, "
                 "modelId=:model, promptVersion=:prompt, updatedAt=:now, gsi1pk=:gsi1pk, gsi1sk=:gsi1sk, "
                 "gsi2pk=:gsi2pk, gsi2sk=:gsi2sk"
+                + (", " + ", ".join(location_assignments) if location_assignments else "")
             ),
             "ConditionExpression": "analysisStatus <> :completed",
             "ExpressionAttributeValues": serialize_values(values),
         }
     }
+    if location_assignments:
+        request_update["Update"]["ExpressionAttributeNames"] = {
+            f"#location{index}": name
+            for index, name in enumerate(location_update.attributes)
+        }
     stats_values = _stats_values(analysis, priority, now)
     boto3.client("dynamodb").transact_write_items(
         TransactItems=[
@@ -119,8 +132,9 @@ def _process(request_id: str) -> None:
         return
     analysis = analyze_message(item["message"])
     priority = calculate_priority(analysis)
+    location_update = geocode_request_location(item)
     try:
-        _complete(request_id, item, analysis, priority)
+        _complete(request_id, item, analysis, priority, location_update)
     except ClientError as exc:
         if exc.response["Error"]["Code"] == "TransactionCanceledException":
             latest = table.get_item(Key={"requestId": request_id}, ConsistentRead=True).get("Item")
