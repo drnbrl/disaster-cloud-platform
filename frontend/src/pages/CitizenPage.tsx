@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { createRequest, type CreateRequestPayload } from "../api";
 
 const CITY_MIN_LENGTH = 1;
@@ -34,12 +34,15 @@ type RequiredTextField = "city" | "district" | "address" | "message";
 type FieldErrors = Partial<Record<RequiredTextField, string>>;
 
 export function CitizenPage() {
+  const navigate = useNavigate();
   const [city, setCity] = useState("");
   const [district, setDistrict] = useState("");
   const [latitude, setLatitude] = useState("");
   const [longitude, setLongitude] = useState("");
   const [address, setAddress] = useState("");
   const [message, setMessage] = useState("");
+  const [trackingOpen, setTrackingOpen] = useState(false);
+  const [trackingRequestId, setTrackingRequestId] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [coordinateError, setCoordinateError] = useState<string | null>(null);
   const mutation = useMutation({ mutationFn: createRequest });
@@ -80,6 +83,13 @@ export function CitizenPage() {
     mutation.mutate(payload);
   }
 
+  function submitTracking(event: FormEvent) {
+    event.preventDefault();
+    const requestId = trackingRequestId.trim();
+    if (!requestId) return;
+    navigate(`/status/${encodeURIComponent(requestId)}`);
+  }
+
   return (
     <main className="page narrow">
       <header className="hero">
@@ -97,61 +107,78 @@ export function CitizenPage() {
           </div>
         </section>
       ) : (
-        <form className="panel form-grid" onSubmit={submit}>
-          <div className="field">
-            <label className="field-label" htmlFor="city">
-              Şehir<RequiredFieldIndicator />
-            </label>
-            <input id="city" value={city} onChange={e => { setCity(e.target.value); clearFieldError("city", fieldErrors, setFieldErrors); }} required minLength={CITY_MIN_LENGTH} maxLength={CITY_MAX_LENGTH} placeholder="Hatay" aria-describedby={cityDescription} aria-invalid={fieldErrors.city ? true : undefined} />
-            <p id={CITY_HELPER_ID} className="field-helper">Örn. Hatay — Zorunlu, en fazla {CITY_MAX_LENGTH} karakter.</p>
-            {fieldErrors.city && <p id={CITY_ERROR_ID} className="field-error" role="alert">{fieldErrors.city}</p>}
-          </div>
-          <div className="field">
-            <label className="field-label" htmlFor="district">
-              İlçe<RequiredFieldIndicator />
-            </label>
-            <input id="district" value={district} onChange={e => { setDistrict(e.target.value); clearFieldError("district", fieldErrors, setFieldErrors); }} required minLength={DISTRICT_MIN_LENGTH} maxLength={DISTRICT_MAX_LENGTH} placeholder="Antakya" aria-describedby={districtDescription} aria-invalid={fieldErrors.district ? true : undefined} />
-            <p id={DISTRICT_HELPER_ID} className="field-helper">Örn. Antakya — Zorunlu, en fazla {DISTRICT_MAX_LENGTH} karakter.</p>
-            {fieldErrors.district && <p id={DISTRICT_ERROR_ID} className="field-error" role="alert">{fieldErrors.district}</p>}
-          </div>
-          <div className="two-column">
+        <>
+          <form className="panel form-grid" onSubmit={submit}>
             <div className="field">
-              <label className="field-label" htmlFor="latitude">Enlem</label>
-              <input id="latitude" value={latitude} onChange={e => { setLatitude(e.target.value); setCoordinateError(null); }} type="number" step="any" min={LATITUDE_MIN} max={LATITUDE_MAX} placeholder="36.2021" aria-describedby={latitudeDescription} aria-invalid={coordinateError ? true : undefined} />
-              <p id={LATITUDE_HELPER_ID} className="field-helper">Örn. 36.2021 — İsteğe bağlı, {LATITUDE_MIN} ile {LATITUDE_MAX} arasında.</p>
+              <label className="field-label" htmlFor="city">
+                Şehir<RequiredFieldIndicator />
+              </label>
+              <input id="city" value={city} onChange={e => { setCity(e.target.value); clearFieldError("city", fieldErrors, setFieldErrors); }} required minLength={CITY_MIN_LENGTH} maxLength={CITY_MAX_LENGTH} placeholder="Hatay" aria-describedby={cityDescription} aria-invalid={fieldErrors.city ? true : undefined} />
+              <p id={CITY_HELPER_ID} className="field-helper">Örn. Hatay — Zorunlu, en fazla {CITY_MAX_LENGTH} karakter.</p>
+              {fieldErrors.city && <p id={CITY_ERROR_ID} className="field-error" role="alert">{fieldErrors.city}</p>}
             </div>
             <div className="field">
-              <label className="field-label" htmlFor="longitude">Boylam</label>
-              <input id="longitude" value={longitude} onChange={e => { setLongitude(e.target.value); setCoordinateError(null); }} type="number" step="any" min={LONGITUDE_MIN} max={LONGITUDE_MAX} placeholder="36.1604" aria-describedby={longitudeDescription} aria-invalid={coordinateError ? true : undefined} />
-              <p id={LONGITUDE_HELPER_ID} className="field-helper">Örn. 36.1604 — İsteğe bağlı, {LONGITUDE_MIN} ile {LONGITUDE_MAX} arasında.</p>
+              <label className="field-label" htmlFor="district">
+                İlçe<RequiredFieldIndicator />
+              </label>
+              <input id="district" value={district} onChange={e => { setDistrict(e.target.value); clearFieldError("district", fieldErrors, setFieldErrors); }} required minLength={DISTRICT_MIN_LENGTH} maxLength={DISTRICT_MAX_LENGTH} placeholder="Antakya" aria-describedby={districtDescription} aria-invalid={fieldErrors.district ? true : undefined} />
+              <p id={DISTRICT_HELPER_ID} className="field-helper">Örn. Antakya — Zorunlu, en fazla {DISTRICT_MAX_LENGTH} karakter.</p>
+              {fieldErrors.district && <p id={DISTRICT_ERROR_ID} className="field-error" role="alert">{fieldErrors.district}</p>}
             </div>
-          </div>
-          {coordinateError && <p id={COORDINATE_ERROR_ID} className="error-box" role="alert">{coordinateError}</p>}
-          <div className="field">
-            <label className="field-label" htmlFor="address">
-              Adres<RequiredFieldIndicator />
-            </label>
-            <textarea id="address" value={address} onChange={e => { setAddress(e.target.value); clearFieldError("address", fieldErrors, setFieldErrors); }} rows={3} required minLength={ADDRESS_MIN_LENGTH} maxLength={ADDRESS_MAX_LENGTH} placeholder="Örn. Atatürk Caddesi, No: 15, Antakya/Hatay" aria-describedby={addressDescription} aria-invalid={fieldErrors.address ? true : undefined} />
-            <div className="field-footer">
-              <p id={ADDRESS_HELPER_ID} className="field-helper">Örn. Atatürk Caddesi, No: 15, Antakya/Hatay — Zorunlu, en az {ADDRESS_MIN_LENGTH} ve en fazla {ADDRESS_MAX_LENGTH} karakter.</p>
-              <span id={ADDRESS_COUNTER_ID} className="character-counter" aria-live="polite" aria-atomic="true">{address.length}/{ADDRESS_MAX_LENGTH}</span>
+            <div className="two-column">
+              <div className="field">
+                <label className="field-label" htmlFor="latitude">Enlem</label>
+                <input id="latitude" value={latitude} onChange={e => { setLatitude(e.target.value); setCoordinateError(null); }} type="number" step="any" min={LATITUDE_MIN} max={LATITUDE_MAX} placeholder="36.2021" aria-describedby={latitudeDescription} aria-invalid={coordinateError ? true : undefined} />
+                <p id={LATITUDE_HELPER_ID} className="field-helper">Örn. 36.2021 — İsteğe bağlı, {LATITUDE_MIN} ile {LATITUDE_MAX} arasında.</p>
+              </div>
+              <div className="field">
+                <label className="field-label" htmlFor="longitude">Boylam</label>
+                <input id="longitude" value={longitude} onChange={e => { setLongitude(e.target.value); setCoordinateError(null); }} type="number" step="any" min={LONGITUDE_MIN} max={LONGITUDE_MAX} placeholder="36.1604" aria-describedby={longitudeDescription} aria-invalid={coordinateError ? true : undefined} />
+                <p id={LONGITUDE_HELPER_ID} className="field-helper">Örn. 36.1604 — İsteğe bağlı, {LONGITUDE_MIN} ile {LONGITUDE_MAX} arasında.</p>
+              </div>
             </div>
-            {fieldErrors.address && <p id={ADDRESS_ERROR_ID} className="field-error" role="alert">{fieldErrors.address}</p>}
-          </div>
-          <div className="field">
-            <label className="field-label" htmlFor="message">
-              Yardım Talebi<RequiredFieldIndicator />
-            </label>
-            <textarea id="message" value={message} onChange={e => { setMessage(e.target.value); clearFieldError("message", fieldErrors, setFieldErrors); }} rows={8} minLength={MESSAGE_MIN_LENGTH} maxLength={MESSAGE_MAX_LENGTH} required placeholder="25 kişiyiz. İçme suyumuz bitti. 2 yaralı var." aria-describedby={messageDescription} aria-invalid={fieldErrors.message ? true : undefined} />
-            <div className="field-footer">
-              <p id={MESSAGE_HELPER_ID} className="field-helper">Yaşadığınız durumu açıkça yazın. Zorunlu, en az {MESSAGE_MIN_LENGTH} ve en fazla {MESSAGE_MAX_LENGTH} karakter.</p>
-              <span id={MESSAGE_COUNTER_ID} className="character-counter" aria-live="polite" aria-atomic="true">{message.length}/{MESSAGE_MAX_LENGTH}</span>
+            {coordinateError && <p id={COORDINATE_ERROR_ID} className="error-box" role="alert">{coordinateError}</p>}
+            <div className="field">
+              <label className="field-label" htmlFor="address">
+                Adres<RequiredFieldIndicator />
+              </label>
+              <textarea id="address" value={address} onChange={e => { setAddress(e.target.value); clearFieldError("address", fieldErrors, setFieldErrors); }} rows={3} required minLength={ADDRESS_MIN_LENGTH} maxLength={ADDRESS_MAX_LENGTH} placeholder="Örn. Atatürk Caddesi, No: 15, Antakya/Hatay" aria-describedby={addressDescription} aria-invalid={fieldErrors.address ? true : undefined} />
+              <div className="field-footer">
+                <p id={ADDRESS_HELPER_ID} className="field-helper">Örn. Atatürk Caddesi, No: 15, Antakya/Hatay — Zorunlu, en az {ADDRESS_MIN_LENGTH} ve en fazla {ADDRESS_MAX_LENGTH} karakter.</p>
+                <span id={ADDRESS_COUNTER_ID} className="character-counter" aria-live="polite" aria-atomic="true">{address.length}/{ADDRESS_MAX_LENGTH}</span>
+              </div>
+              {fieldErrors.address && <p id={ADDRESS_ERROR_ID} className="field-error" role="alert">{fieldErrors.address}</p>}
             </div>
-            {fieldErrors.message && <p id={MESSAGE_ERROR_ID} className="field-error" role="alert">{fieldErrors.message}</p>}
-          </div>
-          {mutation.error && <p className="error-box">{mutation.error.message}</p>}
-          <button className="button" disabled={mutation.isPending}>{mutation.isPending ? "Gönderiliyor…" : "Talebi gönder"}</button>
-        </form>
+            <div className="field">
+              <label className="field-label" htmlFor="message">
+                Yardım Talebi<RequiredFieldIndicator />
+              </label>
+              <textarea id="message" value={message} onChange={e => { setMessage(e.target.value); clearFieldError("message", fieldErrors, setFieldErrors); }} rows={8} minLength={MESSAGE_MIN_LENGTH} maxLength={MESSAGE_MAX_LENGTH} required placeholder="25 kişiyiz. İçme suyumuz bitti. 2 yaralı var." aria-describedby={messageDescription} aria-invalid={fieldErrors.message ? true : undefined} />
+              <div className="field-footer">
+                <p id={MESSAGE_HELPER_ID} className="field-helper">Yaşadığınız durumu açıkça yazın. Zorunlu, en az {MESSAGE_MIN_LENGTH} ve en fazla {MESSAGE_MAX_LENGTH} karakter.</p>
+                <span id={MESSAGE_COUNTER_ID} className="character-counter" aria-live="polite" aria-atomic="true">{message.length}/{MESSAGE_MAX_LENGTH}</span>
+              </div>
+              {fieldErrors.message && <p id={MESSAGE_ERROR_ID} className="field-error" role="alert">{fieldErrors.message}</p>}
+            </div>
+            {mutation.error && <p className="error-box">{mutation.error.message}</p>}
+            <div className="actions">
+              <button className="button" disabled={mutation.isPending}>{mutation.isPending ? "Gönderiliyor…" : "Talebi gönder"}</button>
+              <button className="button secondary" type="button" onClick={() => setTrackingOpen(true)}>Talebi takip et</button>
+            </div>
+          </form>
+          {!mutation.data && trackingOpen && (
+            <form className="panel form-grid" onSubmit={submitTracking}>
+              <div className="field">
+                <label className="field-label" htmlFor="tracking-request-id">Talep ID / Takip numarası</label>
+                <input id="tracking-request-id" value={trackingRequestId} onChange={e => setTrackingRequestId(e.target.value)} />
+                <p className="field-helper">Talep oluşturulduktan sonra verilen takip numarasını girin.</p>
+              </div>
+              <div className="actions">
+                <button className="button" type="submit">Talebi görüntüle</button>
+              </div>
+            </form>
+          )}
+        </>
       )}
       <p className="admin-link"><Link to="/admin/login">Kriz merkezi yetkili girişi</Link></p>
     </main>
