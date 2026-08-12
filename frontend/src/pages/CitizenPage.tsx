@@ -83,7 +83,7 @@ export function CitizenPage() {
   return (
     <main className="page narrow">
       <header className="hero">
-        <p className="eyebrow">AI-Powered Disaster Cloud Platform</p>
+        <p className="eyebrow">DISASTER Cloud Platform</p>
         <h1>Yardım talebi oluştur</h1>
         <p>Durumunuzu kendi cümlelerinizle yazın.</p>
       </header>
