@@ -7,7 +7,7 @@ from shared.models import AiAnalysis, Needs
 
 
 def _norm(text: str) -> str:
-    return unicodedata.normalize("NFKC", text.casefold())
+    return unicodedata.normalize("NFKC", text.casefold()).replace("\u0307", "")
 
 
 def _number(patterns: list[str], text: str) -> int | None:
@@ -27,7 +27,21 @@ def analyze_with_mock(message: str) -> AiAnalysis:
     people = _number([r"(\d{1,7})\s*(?:kişiyiz|kisiyiz|kişi|kisi|insan)", r"(?:toplam|yaklaşık|yaklasik)\s*(\d{1,7})"], text)
     injured = _number([r"(\d{1,7})\s*(?:yaralı|yarali)", r"(?:yaralı|yarali)\s*[:\-]?\s*(\d{1,7})"], text)
 
-    water = _has(text, "su yok", "suyumuz bitti", "su bitti", "içme su", "icme su", "susuz")
+    water = _has(
+    text,
+    "su yok",
+    "suyumuz bitti",
+    "suyumuz tüken",
+    "suyumuz tuken",
+    "su bitti",
+    "içme su",
+    "icme su",
+    "su ihtiyac",
+    "su deste",
+    "su lazım",
+    "su lazim",
+    "susuz",
+)
     food = _has(text, "gıda", "gida", "yiyecek", "yemek yok", "açız", "aciz")
     shelter = _has(text, "çadır", "cadir", "barın", "barin", "evsiz", "evimiz yıkıldı", "evimiz yikildi")
     medical = injured is not None or _has(text, "yaralı", "yarali", "ilaç", "ilac", "doktor", "ambulans", "sağlık", "saglik", "kanama")
@@ -53,7 +67,7 @@ def analyze_with_mock(message: str) -> AiAnalysis:
         "building_collapse_risk": ("çökme riski", "cokme riski", "bina çatlak", "bina catlak"),
         "child_in_immediate_danger": ("bebek nefes", "çocuk ağır", "cocuk agir"),
         "injured_people": ("yaralı", "yarali"),
-        "no_drinking_water": ("su yok", "suyumuz bitti", "içme su", "icme su"),
+        "no_drinking_water": ("su yok", "suyumuz bitti", "içme su", "icme su", "suyumuz tüken", "suyumuz tuken", "su bitti"),
     }
     signals = [name for name, terms in signal_terms.items() if _has(text, *terms)]
     categories = [name for name, active in {"su": water, "gıda": food, "barınma": shelter, "sağlık": medical, "elektrik": electricity, "bebek desteği": baby}.items() if active]
